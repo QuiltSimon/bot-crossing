@@ -134,3 +134,47 @@ test('a cross-origin write is refused even though the host is local', async () =
     assert.equal(bad.status, 403)
   })
 })
+
+// ── marking a thread viewed ───────────────────────────────────────────────────
+
+/**
+ * The rule `applyThreads` uses. Kept here as well because it is one line in the browser and
+ * the whole point of it is the *second* half: viewed is a timestamp, not a flag, so a thread
+ * that moves on afterwards starts asking again.
+ */
+const suppressUnread = (thread, viewedAt) => {
+  const at = viewedAt[thread.id]
+  return at && thread.lastActivityAt <= at ? { ...thread, unread: false } : thread
+}
+
+test('marking a thread viewed stops it asking', () => {
+  const t = { id: 'a', unread: true, lastActivityAt: 100 }
+  assert.equal(suppressUnread(t, { a: 200 }).unread, false)
+})
+
+test('a thread that moves on after you looked asks again', () => {
+  const t = { id: 'a', unread: true, lastActivityAt: 300 }
+  assert.equal(suppressUnread(t, { a: 200 }).unread, true, 'newer activity beats an older look')
+})
+
+test('viewing one thread says nothing about another', () => {
+  const t = { id: 'b', unread: true, lastActivityAt: 100 }
+  assert.equal(suppressUnread(t, { a: 200 }).unread, true)
+})
+
+test('viewedAt survives a merge, so a second tab cannot un-view a thread', () => {
+  const merged = mergeState({ viewedAt: {} }, { viewedAt: { a: 5 } }, { viewedAt: { b: 7 } })
+  assert.deepEqual(merged.viewedAt, { a: 5, b: 7 })
+})
+
+test('viewedAt is carried through the v1 migration with the ids it keys on', async () => {
+  await withServer(async ({ call, dir }) => {
+    const id = 'fe911daa-2393-4e29-8d36-6e37c328594c'
+    await fsp.writeFile(
+      path.join(dir, 'colony.json'),
+      JSON.stringify({ version: 1, viewedAt: { [id]: 42 }, updatedAt: 1 })
+    )
+    const state = await (await call('/api/state')).json()
+    assert.deepEqual(Object.keys(state.viewedAt), [`claude-code:${id}`])
+  })
+})

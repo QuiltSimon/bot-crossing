@@ -37,6 +37,7 @@ function migrate(raw) {
     archivedAt: keys(raw.archivedAt),
     opened: asArray(raw.opened).map(migrateId),
     seen: keys(raw.seen),
+    viewedAt: keys(raw.viewedAt),
   }
 }
 
@@ -54,6 +55,7 @@ const emptyState = () => ({
   plots: {},
   seen: {},
   hiddenProjects: [],
+  viewedAt: {},
   settings: null,
   updatedAt: 0,
 })
@@ -72,6 +74,7 @@ async function readState() {
       plots: asObject(raw.plots),
       seen: asObject(raw.seen),
       hiddenProjects: asArray(raw.hiddenProjects).map(String).filter(Boolean),
+      viewedAt: asObject(raw.viewedAt),
       settings: raw.settings && typeof raw.settings === 'object' ? raw.settings : null,
       updatedAt: Number(raw.updatedAt) || 0,
     }
@@ -106,6 +109,7 @@ async function writeState(next) {
     plots: asObject(next.plots),
     seen: asObject(next.seen),
     hiddenProjects: asArray(next.hiddenProjects).map(String).filter(Boolean),
+    viewedAt: asObject(next.viewedAt),
     settings: next.settings && typeof next.settings === 'object' ? next.settings : null,
     updatedAt: Date.now(),
   }

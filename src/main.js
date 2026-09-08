@@ -47,7 +47,7 @@ const engine = new Engine(settings).mount(app)
 const rig = new CameraRig(engine.camera, engine.canvas, settings)
 const colony = new Colony(engine.scene, settings, engine.camera, engine.renderer)
 
-let state = { archived: [], archivedAt: {}, opened: [], plots: {}, seen: {}, hiddenProjects: [] }
+let state = { archived: [], archivedAt: {}, opened: [], plots: {}, seen: {}, hiddenProjects: [], viewedAt: {} }
 let threads = []
 /** Last legend built for the bottom bar, kept so the open zone's chip can light up between polls. */
 let legendProjects = []
@@ -165,6 +165,24 @@ const actions = {
     } catch (err) {
       hud.toast(err.message || 'Could not open that folder', 'err')
     }
+  },
+
+  /**
+   * Stop a thread asking for you, without touching it.
+   *
+   * `unread` comes from the harness, and the harness only counts a thread as read when it is
+   * focused *in its own app*. Answer one in a terminal, or read it over somebody's shoulder,
+   * and it keeps its hand up forever. Marking it viewed here records when you looked; the
+   * moment the thread does something newer than that it goes back to waving, which is the
+   * behaviour you actually want and the reason this is a timestamp rather than a flag.
+   */
+  markViewed: () => {
+    const thread = threads.find((t) => t.id === selectedId)
+    if (!thread) return
+    state.viewedAt = { ...(state.viewedAt || {}), [thread.id]: Date.now() }
+    queueSave()
+    applyThreads(threads)
+    hud.toast(`Marked ${thread.title.slice(0, 40)} as viewed`)
   },
 
   hideProject: () => {
@@ -527,6 +545,10 @@ window.addEventListener('keydown', (e) => {
     case 'A':
       if (selectedId) actions.archiveThread()
       break
+    case 'v':
+    case 'V':
+      if (selectedId) actions.markViewed()
+      break
     case 'c':
     case 'C':
       if (selectedProject) actions.newConversation()
@@ -571,7 +593,14 @@ window.addEventListener('keydown', (e) => {
 // ── data ──────────────────────────────────────────────────────────────────────────────
 
 function applyThreads(list) {
-  threads = list
+  // A thread you have said you looked at stops counting as unread until it moves on again.
+  // Done here rather than in `statusFor` so the card, the badge and the astronaut all agree.
+  const viewed = state.viewedAt || {}
+  threads = list.map((t) => {
+    const at = viewed[t.id]
+    return at && t.lastActivityAt <= at ? { ...t, unread: false } : t
+  })
+  list = threads
   const archivedSet = new Set(state.archived)
   const hiddenSet = new Set(state.hiddenProjects || [])
 

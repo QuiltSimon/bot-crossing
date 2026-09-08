@@ -873,6 +873,10 @@ body {
 .side .hidden-repo:hover { background: transparent; }
 .side .hidden-repo .n { opacity: 0.72; }
 
+.thread-pop .actions #btn-viewed[hidden] {
+  display: none;
+}
+
 .side .folded-note .n {
   opacity: 0.6;
   font-style: italic;
