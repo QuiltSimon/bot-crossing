@@ -123,6 +123,8 @@ const DEFAULTS = {
   planet: 'moon',
   timeOfDay: 0.32, // 0..1 — 0 is midnight, 0.5 is noon
   autoTime: false,
+  /** Sky follows this machine's own clock. Wins over `autoTime`; both off is manual. */
+  clockTime: false,
   dayLength: 240, // seconds for a full cycle when autoTime is on
 
   // Look

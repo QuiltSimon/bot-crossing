@@ -94,6 +94,7 @@ const actions = {
 
   cycleTime: () => {
     settings.set('autoTime', false)
+    settings.set('clockTime', false)
     const current = settings.get('timeOfDay')
     // Step to the next named time *after* the current one, wrapping at midnight.
     const next = TIMES.find((t) => t.value > current + 0.005) || TIMES[0]
@@ -560,7 +561,21 @@ function applyThreads(list) {
   threads = list
   const archivedSet = new Set(state.archived)
   const hiddenSet = new Set(state.hiddenProjects || [])
-  const stats = colony.setThreads(list, archivedSet, hiddenSet)
+
+  // Which threads the colony has met before. Walking out of the ship is meant to *mean*
+  // something — a thread that just appeared — and without this every reload staged a
+  // hundred-astronaut entrance, which piled up at the ramp and read as a bug because it was
+  // one. A thread already on the books is simply already outside.
+  const known = new Set(Object.keys(state.seen || {}))
+  let firstSeen = false
+  for (const t of list) {
+    if (state.seen?.[t.id]) continue
+    state.seen = { ...(state.seen || {}), [t.id]: Date.now() }
+    firstSeen = true
+  }
+  if (firstSeen) queueSave()
+
+  const stats = colony.setThreads(list, archivedSet, hiddenSet, known)
   hud.setStats(stats)
 
   legendProjects = colony.plotOrder

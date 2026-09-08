@@ -258,7 +258,7 @@ export class Colony {
    * ids — repo name for plots, session id for buildings — so a poll that changes nothing
    * moves nothing on screen.
    */
-  setThreads(threads, archivedIds = new Set(), hiddenProjects = new Set()) {
+  setThreads(threads, archivedIds = new Set(), hiddenProjects = new Set(), knownIds = new Set()) {
     const now = Date.now()
     const live = liveThreadsForColony(threads, archivedIds, hiddenProjects)
 
@@ -321,6 +321,8 @@ export class Colony {
           // Where the work actually is. A working astronaut circles it rather than standing
           // at one spot, so it needs the building, not just a place to stand near it.
           anchor: building.mesh.position.clone(),
+          // Already on the colony's books, so it does not need an entrance.
+          known: knownIds.has(thread.id),
         })
       })
     }

@@ -1,6 +1,6 @@
 import { PRESETS, PLANETS_ORDER } from './hud-data.js'
 import { PLANETS } from '../world/planet.js'
-import { TIMES } from '../world/sky.js'
+import { TIMES, systemTimeOfDay } from '../world/sky.js'
 import { STATUS_LABEL } from '../game/colony.js'
 import { FACE, FRAME_COLS, FRAME_ROWS } from '../agents/faces.js'
 import { PLOT_PALETTE, hashString } from '../world/plots.js'
@@ -199,16 +199,28 @@ export class Hud {
     const light = group('Lighting')
     light.append(
       chips(
-        TIMES.map((t) => ({ id: t.id, label: t.label })),
-        () => nearestTime(this.settings.get('timeOfDay')),
+        // `Live` is a time of day like the others from where you are standing, so it belongs
+        // in the same row rather than in a toggle further down.
+        [...TIMES.map((t) => ({ id: t.id, label: t.label })), { id: 'live', label: 'Live' }],
+        () => (this.settings.get('clockTime') ? 'live' : nearestTime(this.settings.get('timeOfDay'))),
         (id) => {
           this.settings.set('autoTime', false)
-          this.settings.set('timeOfDay', TIMES.find((t) => t.id === id).value)
+          this.settings.set('clockTime', id === 'live')
+          if (id === 'live') this.settings.set('timeOfDay', systemTimeOfDay())
+          else this.settings.set('timeOfDay', TIMES.find((t) => t.id === id).value)
         },
         this.controls
       ),
-      this._slider('Time of day', 'timeOfDay', 0, 1, 0.005, clockLabel),
-      this._toggle('Cycle day/night', 'autoTime', 'Runs the clock forward on its own.'),
+      this._slider('Time of day', 'timeOfDay', 0, 1, 0.005, clockLabel, undefined, () => {
+        // Reaching for the slider is a request for a particular light, so stop following the
+        // clock — otherwise the next frame would drag the thumb straight back.
+        this.settings.set('clockTime', false)
+      }),
+      this._toggle(
+        'Cycle day/night',
+        'autoTime',
+        'Runs the clock forward on its own. Ignored while the sky is following this machine’s clock.'
+      ),
       this._slider('Cycle length', 'dayLength', 30, 900, 30, (v) => `${Math.round(v / 60)}m`),
       this._toggle(
         'Environment light',
@@ -283,7 +295,7 @@ export class Hud {
     return row
   }
 
-  _slider(label, key, min, max, step, format, hint) {
+  _slider(label, key, min, max, step, format, hint, onInput) {
     const row = this._row(label, hint)
     const wrap = document.createElement('div')
     wrap.style.cssText = 'display:flex;align-items:center;gap:8px'
@@ -295,7 +307,10 @@ export class Hud {
     input.step = step
     const out = document.createElement('span')
     out.className = 'value'
-    input.addEventListener('input', () => this.settings.set(key, Number(input.value)))
+    input.addEventListener('input', () => {
+      onInput?.()
+      this.settings.set(key, Number(input.value))
+    })
     wrap.append(input, out)
     row.appendChild(wrap)
     this.controls.push({
