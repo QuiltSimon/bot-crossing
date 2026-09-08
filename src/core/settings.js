@@ -121,8 +121,13 @@ const DEFAULTS = {
 
   // World
   planet: 'moon',
-  /** Fold away repos where every thread has been quiet for three days. */
-  hideDormant: false,
+  /**
+   * Fold away repos where every thread has been quiet for three days. On by default: with
+   * several harnesses read at once the map otherwise fills with every checkout you have ever
+   * opened, and the few repos actually being worked in get lost among them. It is reversible in
+   * one click and a folded repo returns to the same ground the moment a thread wakes up.
+   */
+  hideDormant: true,
   timeOfDay: 0.32, // 0..1 — 0 is midnight, 0.5 is noon
   autoTime: false,
   /** Sky follows this machine's own clock. Wins over `autoTime`; both off is manual. */
@@ -132,7 +137,7 @@ const DEFAULTS = {
   // Look
   exposure: 1.0,
   bloomStrength: 0.25,
-  tiltShiftStrength: 0.4, // 0..1 — share of the effect's full blur radius (2% of frame height)
+  tiltShiftStrength: 0.2, // 0..1 — share of the effect's full blur radius (2% of frame height)
   tiltShiftAngle: 0, // degrees — 0 keeps the sharp band horizontal
   iblIntensity: 1.0,
   fov: 38,
