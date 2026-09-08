@@ -224,12 +224,22 @@ const actions = {
   archiveThread: () => {
     const thread = threads.find((t) => t.id === selectedId)
     if (!thread) return
+    const foldedBefore = new Set(colony.dormantProjects || [])
     state.archived = [...new Set([...state.archived, thread.id])]
     state.archivedAt = { ...state.archivedAt, [thread.id]: Date.now() }
     queueSave()
     select(null, {})
     applyThreads(threads)
-    hud.toast('Archived — heading home')
+    // Retiring the last thread anybody has touched in a repo makes every thread left in it
+    // dormant, and the whole zone folds away — sixty astronauts can leave the map on one
+    // click. That is the setting working, but silently it reads as the colony breaking, so
+    // it says which repo went and why.
+    const folded = [...(colony.dormantProjects || [])].filter((n) => !foldedBefore.has(n))
+    hud.toast(
+      folded.length
+        ? `Archived — ${folded.join(', ')} ${folded.length === 1 ? 'is' : 'are'} all quiet now, folded off the map`
+        : 'Archived — heading home'
+    )
     colony.ship.ping()
   },
 
@@ -337,11 +347,14 @@ function pathForProject(name) {
 /** Push the open zone's current contents at the sidebar. Closes it if the zone is gone. */
 function syncProject() {
   const hidden = hiddenCatalog(state.hiddenProjects || [], threads)
+  // Folded-away repos are listed alongside the ones you hid by hand. Same principle: nothing
+  // leaves the map without somewhere on screen saying where it went.
+  const folded = hiddenCatalog([...(colony.dormantProjects || [])], threads)
   const plot = selectedProject ? colony.plots.get(selectedProject) : null
   if (!plot) {
     selectedProject = null
     hud.setProject(null)
-    hud.setLegend(legendProjects, null, hidden)
+    hud.setLegend(legendProjects, null, hidden, folded)
     return
   }
   const now = Date.now()
@@ -370,7 +383,7 @@ function syncProject() {
   })
   // The legend is the same selection seen from the bottom of the screen: keep it in step
   // here rather than only on the next poll.
-  hud.setLegend(legendProjects, selectedProject, hidden)
+  hud.setLegend(legendProjects, selectedProject, hidden, folded)
 }
 
 // ── pointer ───────────────────────────────────────────────────────────────────────────

@@ -401,11 +401,12 @@ export class Hud {
    * it is a list now because the sidebar is where all the chrome lives, and because a list
    * can carry a count and an alarm without running out of room at eleven repos.
    */
-  setLegend(projects, activeName = null, hidden = []) {
+  setLegend(projects, activeName = null, hidden = [], folded = []) {
     const signature =
       projects.map((p) => `${p.name}:${p.count}:${p.accent}:${p.urgent ? 1 : 0}`).join('|') +
       `~${activeName}~` +
-      hidden.map((p) => `${p.name}:${p.count}`).join('|')
+      hidden.map((p) => `${p.name}:${p.count}`).join('|') +
+      `~${folded.length}`
     if (this._last.legend === signature) return
     this._last.legend = signature
 
@@ -430,8 +431,7 @@ export class Hud {
     // The hidden list is its own block at the foot of the sidebar: collapsed by default, because
     // the whole point of hiding a repo is not to look at it.
     const block = this.$('.hidden-block')
-    block.hidden = hidden.length === 0
-    this.$('#btn-hidden-toggle .label').textContent = `${hidden.length} hidden`
+    block.hidden = hidden.length === 0 && folded.length === 0
     const hiddenWrap = this.$('.hidden-projects')
     hiddenWrap.innerHTML = ''
     for (const p of hidden) {
@@ -451,6 +451,28 @@ export class Hud {
       row.appendChild(show)
       hiddenWrap.appendChild(row)
     }
+
+    // The dormant fold gets one line rather than a row each: it is a setting, not a list of
+    // decisions, and the thing worth offering is the way back rather than per-repo control.
+    if (folded.length) {
+      const n = folded.reduce((sum, p) => sum + p.count, 0)
+      const row = document.createElement('div')
+      row.className = 'repo hidden-repo folded-note'
+      row.innerHTML =
+        `<span class="n">${folded.length} quiet repo${folded.length === 1 ? '' : 's'}` +
+        `, ${n} thread${n === 1 ? '' : 's'}</span>`
+      const show = document.createElement('button')
+      show.type = 'button'
+      show.className = 'btn ghost show-repo'
+      show.title = 'Put dormant repos back on the map'
+      show.textContent = 'Show'
+      show.addEventListener('click', () => this.settings.set('hideDormant', false))
+      row.appendChild(show)
+      hiddenWrap.appendChild(row)
+    }
+
+    const total = hidden.length + folded.length
+    this.$('#btn-hidden-toggle .label').textContent = `${total} off the map`
     this._syncHiddenList()
   }
 

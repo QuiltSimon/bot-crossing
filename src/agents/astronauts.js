@@ -467,7 +467,11 @@ export class Astronauts {
     this.roster = entries
     this.world = world || this.world
     const cap = Math.min(this.capacity, this.settings.get('maxAgents'))
-    const wanted = entries.slice(0, cap)
+    // Agents on their way back to the ship still hold a slot, so the roster has to leave room
+    // for them. Without this the clamp above would quietly drop whoever sorted last, which is
+    // better than an empty planet but still not what the scan said.
+    const leaving = this.agents.reduce((n, a) => n + (a.state === 'leaving' ? 1 : 0), 0)
+    const wanted = entries.slice(0, Math.max(1, cap - leaving))
     const seen = new Set()
 
     // The ramp is one door and the ship is a solid obstacle around it, so an entrance is a
@@ -1153,6 +1157,16 @@ export class Astronauts {
     let hands = 0
     let staticDirty = false
     for (const agent of this.agents) {
+      // Never write past the end of the instance buffers. Going over is not a rendering
+      // artefact you can squint past: WebGL refuses the whole `drawElementsInstanced` call, so
+      // one agent too many takes *every* astronaut off screen at once.
+      //
+      // It can go over. `setRoster` caps how many agents it will spawn, but an agent that has
+      // left the roster stays in this list while it walks back to the ship — and the slot it
+      // vacated in the roster is immediately filled by a thread that was previously past the
+      // cap. Archive one thread on a colony sitting at the cap and there is briefly one more
+      // agent than there are slots, which is exactly when the colony would empty.
+      if (i >= this.capacity) break
       if (agent.state === 'gone') continue
       const s = agent.scale
       if (s <= 0.001) continue

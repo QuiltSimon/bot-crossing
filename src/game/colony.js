@@ -16,6 +16,7 @@ import { createBuilding, buildingUniforms, Scaffolds } from '../world/buildings.
 import { Ship } from '../world/ship.js'
 import { Astronauts } from '../agents/astronauts.js'
 import { Indicators, BADGE } from '../agents/indicators.js'
+import { MAX_AGENT_CAP } from '../core/settings.js'
 import { Particles } from '../agents/particles.js'
 import { Navigation } from '../agents/navigation.js'
 import { liveThreadsForColony } from './hidden-projects.js'
@@ -138,7 +139,11 @@ export class Colony {
     this.ship = new Ship(scene, shipPosition())
     this.astronauts = new Astronauts(scene, settings)
     this.astronauts.world = this._world()
-    this.indicators = new Indicators(scene, settings, Math.max(64, settings.get('maxAgents')))
+    // Sized for the largest preset rather than the current one: unlike the astronaut meshes these
+    // buffers are never rebuilt, so allocating against today's `maxAgents` means raising quality
+    // later silently starves the badges — the one `?` that wants you being the thing that goes
+    // missing. A badge is a single quad; the spare instances cost almost nothing.
+    this.indicators = new Indicators(scene, settings, MAX_AGENT_CAP)
     this.particles = new Particles(scene, settings)
     this.scaffolds = new Scaffolds(scene, 320)
     this.nav = new Navigation()
