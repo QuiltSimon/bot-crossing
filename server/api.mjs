@@ -42,7 +42,8 @@ function migrate(raw) {
 
 /**
  * Colony state is only ever the things the *game* invents — which plot a project got,
- * what a thread's building looks like, what you archived. The threads themselves stay
+ * what a thread's building looks like, what you archived, which repos you took off the map.
+ * The threads themselves stay
  * read-only: this file is the only thing Bot Crossing writes, anywhere.
  */
 const emptyState = () => ({
@@ -52,6 +53,7 @@ const emptyState = () => ({
   opened: [],
   plots: {},
   seen: {},
+  hiddenProjects: [],
   settings: null,
   updatedAt: 0,
 })
@@ -69,6 +71,7 @@ async function readState() {
       opened: asArray(raw.opened),
       plots: asObject(raw.plots),
       seen: asObject(raw.seen),
+      hiddenProjects: asArray(raw.hiddenProjects).map(String).filter(Boolean),
       settings: raw.settings && typeof raw.settings === 'object' ? raw.settings : null,
       updatedAt: Number(raw.updatedAt) || 0,
     }
@@ -102,6 +105,7 @@ async function writeState(next) {
     opened: asArray(next.opened),
     plots: asObject(next.plots),
     seen: asObject(next.seen),
+    hiddenProjects: asArray(next.hiddenProjects).map(String).filter(Boolean),
     settings: next.settings && typeof next.settings === 'object' ? next.settings : null,
     updatedAt: Date.now(),
   }

@@ -2,12 +2,13 @@
 
 **[botcrossing.com](https://botcrossing.com)**
 
-Every coding-agent thread on this Mac is a little astronaut. They walk out of the ship, claim
+Every coding-agent thread on this machine is a little astronaut. They walk out of the ship, claim
 a plot for their repo, and build something. When one needs you it stops and holds a `?` over
 its head; click it and the thread opens back in whichever harness it came from.
 
 It reads the harness's own files, on your own machine. Nothing is uploaded, there is no
-account, and the only thing it ever writes back is a single archive flag.
+account, and **it never writes to a harness at all** — `data/colony.json`, where the map lives,
+is the only file it writes anywhere.
 
 > **Status:** published as-is. I built this for myself and cannot promise to maintain it —
 > issues and PRs are welcome but may go unanswered, and forking is an entirely reasonable
@@ -39,7 +40,7 @@ somebody writing that adapter.
 | Harness | Status |
 | --- | --- |
 | **[Claude Code](https://claude.com/claude-code)** (Anthropic) | ✅ **Supported** — desktop app and CLI, including worktrees, live-process detection and archiving |
-| [Codex CLI](https://developers.openai.com/codex/cli) (OpenAI) | ⬜ Not yet — transcripts found at `~/.codex/sessions/`, [notes here](server/harnesses/README.md#starting-points) |
+| **[Codex](https://developers.openai.com/codex/cli)** (OpenAI) | ✅ **Supported** — desktop, VS Code and CLI sessions, opened through `codex://` |
 | [OpenCode](https://opencode.ai) | ⬜ Not yet |
 | [Antigravity CLI](https://antigravity.google) (Google) | ⬜ Not yet — the successor to Gemini CLI, which Google stopped serving individual accounts on 18 June 2026 |
 | [Cursor](https://cursor.com) (`cursor-agent`) | ⬜ Not yet |
@@ -191,10 +192,15 @@ flipping to its left rather than sliding under the sidebar, and never leaving th
 It is moved with a transform rather than with `left`/`top`, the one geometric change a
 browser makes without touching layout, so following a walking astronaut costs nothing.
 
-- **Open** hands the thread back to Claude Code and the desktop app comes forward.
-- **Archive** sets `isArchived` on Claude Code's own session record — the thread lands in
-  Claude Code's Archived list, not just here — and the astronaut walks back up the ramp and
-  boards the ship.
+- **Open** hands the thread back to whichever harness owns it and its app comes forward. On a
+  Linux box with no desktop app to answer the deep link, a terminal opens with the CLI resuming
+  the session instead.
+- **Archive** retires the thread *here*: the astronaut walks back up the ramp and boards the
+  ship. Nothing is written to the harness — see [Keeping it local](#keeping-it-local). A thread
+  you archive in the harness's own app goes home on the next poll too, because the scan reads
+  that flag.
+- **Hide** takes a whole repo off the map without touching a single thread. It comes back from
+  the *hidden* list at the foot of the sidebar, onto the same ground it left.
 
 Only one button in the panel is ever the accent colour: whichever action is the immediate
 one. `Esc` steps outward a notch at a time — the thread first, then its zone.
