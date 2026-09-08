@@ -236,6 +236,13 @@ export class Hud {
     // View.
     const view = group('View')
     view.append(
+      this._toggle(
+        'Hide dormant repos',
+        'hideDormant',
+        'Takes a repo off the map when every thread in it has been quiet for three days. Its threads are untouched, and it comes back to the same ground the moment one wakes up.'
+      )
+    )
+    view.append(
       this._toggle('Return to isometric', 'autoFrame', 'Eases the angle back when you stop dragging.'),
       this._slider('Field of view', 'fov', 20, 60, 1, (v) => `${v}°`),
       this._toggle('Project labels', 'showLabels'),

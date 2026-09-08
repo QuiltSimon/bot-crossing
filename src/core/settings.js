@@ -121,6 +121,8 @@ const DEFAULTS = {
 
   // World
   planet: 'moon',
+  /** Fold away repos where every thread has been quiet for three days. */
+  hideDormant: false,
   timeOfDay: 0.32, // 0..1 — 0 is midnight, 0.5 is noon
   autoTime: false,
   /** Sky follows this machine's own clock. Wins over `autoTime`; both off is manual. */

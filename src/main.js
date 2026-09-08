@@ -693,6 +693,9 @@ settings.onChange((changed, scope) => {
   if (scope.render || changed.has('fov')) engine.applySettings()
   colony.onSettingsChanged(changed, scope)
   if (changed.has('showFps')) hud.syncSettings()
+  // Folding dormant repos away changes which threads are on the map, so the colony has to be
+  // rebuilt from the list rather than merely re-rendered.
+  if (changed.has('hideDormant')) applyThreads(threads)
   if (changed.has('maxAgents')) applyThreads(threads)
 })
 

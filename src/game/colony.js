@@ -269,6 +269,30 @@ export class Colony {
       if (!byProject.has(key)) byProject.set(key, [])
       byProject.get(key).push(thread)
     }
+    /**
+     * Repos where nothing has stirred in days, folded away on request.
+     *
+     * A colony is a map you learn, and a map is only learnable if what is on it is worth
+     * looking at. Someone with a hundred checkouts has most of the ground given over to work
+     * they finished in the spring, and the six repos they are actually living in are somewhere
+     * in among it. Dormant is already a status the colony understands — nothing for three days
+     * — so this is that same line drawn one level up, at the repo rather than the thread.
+     *
+     * Deliberately all-or-nothing per repo: a zone with one live thread in it stays whole,
+     * because half a zone would misrepresent the repo rather than tidy the map.
+     */
+    const dormant = new Set()
+    if (this.settings.get('hideDormant')) {
+      for (const [name, list] of byProject) {
+        if (list.every((t) => statusFor(t, now) === 'sleeping')) dormant.add(name)
+      }
+      // Never fold away everything: a colony that answers a poll with an empty planet reads as
+      // broken rather than tidy, and there is nothing on screen to tell you which it was.
+      if (dormant.size === byProject.size) dormant.clear()
+      for (const name of dormant) byProject.delete(name)
+    }
+    this.dormantProjects = dormant
+
     const projects = [...byProject.entries()].sort((a, b) => {
       if (b[1].length !== a[1].length) return b[1].length - a[1].length
       return a[0].localeCompare(b[0])
@@ -276,10 +300,11 @@ export class Colony {
 
     this._syncPlots(projects)
 
-    // A hidden repo keeps its footprint in layout memory, so showing it again reclaims the same
-    // ground if it is still free. Re-inserting the entry also keeps LAYOUT_MEMORY from evicting
-    // a name you only hid — otherwise hiding a zone for a week loses where it used to be.
-    for (const name of hiddenProjects) {
+    // A repo that is off the map keeps its footprint in layout memory, so showing it again
+    // reclaims the same ground if it is still free. Re-inserting the entry also keeps
+    // LAYOUT_MEMORY from evicting a name you only hid — otherwise a zone folded away for a
+    // week loses where it used to be, and comes back somewhere else entirely.
+    for (const name of [...hiddenProjects, ...dormant]) {
       const cells = this.plotCells.get(name)
       if (!cells) continue
       this.plotCells.delete(name)
