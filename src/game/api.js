@@ -31,9 +31,6 @@ export const saveState = (state) =>
  */
 export const openThread = (thread) => post('/api/open', { harness: thread.harness, ref: thread.ref })
 
-export const archiveThread = (thread, archived) =>
-  post('/api/archive', { id: thread.id, harness: thread.harness, ref: thread.ref, archived })
-
 /** A brand new thread in a repo, via that harness's own new-session deep link. */
 export const newSession = (folder, harness) => post('/api/new-session', { folder, harness })
 

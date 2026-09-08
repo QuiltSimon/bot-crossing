@@ -14,7 +14,6 @@ import {
   fetchState,
   saveState,
   openThread,
-  archiveThread,
   newSession,
   revealFolder,
 } from './game/api.js'
@@ -194,25 +193,19 @@ const actions = {
     }
   },
 
-  archiveThread: async () => {
+  // Archiving is the colony's own bookkeeping and nothing else: the thread leaves the map and
+  // the astronaut walks back to the ship. The harness's own records are never touched — see
+  // `reconcileArchived` in server/api.mjs for why that stopped being worth doing.
+  archiveThread: () => {
     const thread = threads.find((t) => t.id === selectedId)
     if (!thread) return
-    try {
-      const res = await archiveThread(thread, true)
-      state.archived = [...new Set([...state.archived, thread.id])]
-      state.archivedAt = { ...state.archivedAt, [thread.id]: Date.now() }
-      queueSave()
-      select(null, {})
-      applyThreads(threads)
-      hud.toast(
-        res.harnessRecord === false
-          ? `Archived here (no ${thread.harnessName || 'harness'} record for it)`
-          : 'Archived — heading home'
-      )
-      colony.ship.ping()
-    } catch (err) {
-      hud.toast(err.message || 'Could not archive that thread', 'err')
-    }
+    state.archived = [...new Set([...state.archived, thread.id])]
+    state.archivedAt = { ...state.archivedAt, [thread.id]: Date.now() }
+    queueSave()
+    select(null, {})
+    applyThreads(threads)
+    hud.toast('Archived — heading home')
+    colony.ship.ping()
   },
 
   uiVisibility: (visible) => colony.setUiVisible(visible),

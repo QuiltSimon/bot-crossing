@@ -6,6 +6,9 @@
  * means writing a sibling of this file rather than editing the scanner. The contract is
  * written down in `server/harnesses/README.md`.
  *
+ * Read-only, without exception. Nothing here writes to Claude Code's files — see the note on
+ * archiving in `server/harnesses/README.md`.
+ *
  * Two stores, deliberately merged rather than picked between:
  *   - the desktop app keeps one JSON record per thread (title, cwd, model, timestamps)
  *   - the CLI keeps the raw transcript, which is the only source for terminal-started work
@@ -13,11 +16,8 @@
 import fsp from 'node:fs/promises'
 import path from 'node:path'
 import os from 'node:os'
-import { execFile } from 'node:child_process'
-import { promisify } from 'node:util'
 import { exists, jsonLines, listDirs, listFiles, num, readHead } from '../lib/fsutil.mjs'
 
-const execFileAsync = promisify(execFile)
 const HOME = os.homedir()
 
 /**
@@ -245,7 +245,6 @@ function toThread(t) {
   return {
     ...rest,
     canOpen: Boolean((desktopSessionId && DESKTOP_ID.test(desktopSessionId)) || (cliSessionId && UUID.test(cliSessionId))),
-    canArchive: desktopSessionIds.length > 0,
     ref: { desktopSessionId, desktopSessionIds, cliSessionId },
   }
 }
@@ -351,57 +350,6 @@ async function scanThreads() {
   return threads.map(toThread)
 }
 
-/** Locate the desktop app's record for a session. Id is pattern-checked, never joined raw. */
-async function findSessionFile(sessionId) {
-  if (!DESKTOP_ID.test(sessionId)) return null
-  for (const account of await listDirs(DESKTOP_SESSIONS)) {
-    for (const org of await listDirs(account)) {
-      const file = path.join(org, `${sessionId}.json`)
-      if (await exists(file)) return file
-    }
-  }
-  return null
-}
-
-/**
- * Flip `isArchived` on the desktop app's own session record — the same field its
- * Archived list reads. Only that one key is touched; everything else is written back
- * byte-for-byte from what was there, through a temp file so a crash can't truncate it.
- */
-async function setSessionArchived(sessionId, archived) {
-  const file = await findSessionFile(sessionId)
-  if (!file) return { ok: false, error: 'No Claude Code session record for that thread' }
-
-  let record
-  try {
-    record = JSON.parse(await fsp.readFile(file, 'utf8'))
-  } catch {
-    return { ok: false, error: 'Session record is unreadable' }
-  }
-  if (!record || typeof record !== 'object' || record.sessionId !== sessionId) {
-    return { ok: false, error: 'Session record did not look like the expected session' }
-  }
-
-  record.isArchived = Boolean(archived)
-  const tmp = `${file}.botcrossing.tmp`
-  await fsp.writeFile(tmp, JSON.stringify(record, null, 2))
-  await fsp.rename(tmp, file)
-  metaCache.delete(record.cliSessionId)
-  return { ok: true, file, archived: Boolean(archived) }
-}
-
-/** Archive every record that maps to a thread — the real one and any import ghosts. */
-async function setArchived(ref, archived) {
-  const ids = ref?.desktopSessionIds || []
-  if (!ids.length) return { ok: false, error: 'No session records for that thread' }
-  const results = []
-  for (const id of ids) results.push(await setSessionArchived(id, archived))
-  const ok = results.some((r) => r.ok)
-  return ok
-    ? { ok, archived: Boolean(archived), records: results.filter((r) => r.ok).length }
-    : results[0] || { ok: false, error: 'No session records for that thread' }
-}
-
 /**
  * Hands the thread back to Claude Code. `epitaxy/<local_…>` *navigates* the desktop app
  * to a thread it already has; `resume` *imports* the transcript, which spawns a second
@@ -428,71 +376,6 @@ function newSession(dir) {
   return { ok: true, url: `claude://code/new?${new URLSearchParams({ folder: dir })}` }
 }
 
-/**
- * When the Claude desktop app last launched. It loads every session record into memory at
- * startup and never re-reads them, so this timestamp is the line between an archive it has
- * seen and one still waiting on disk.
- */
-let appStartCache = { at: 0, checkedAt: 0 }
-async function appStartedAt() {
-  const now = Date.now()
-  if (now - appStartCache.checkedAt < 15000) return appStartCache.at
-
-  let started = 0
-  try {
-    started = process.platform === 'win32' ? await windowsAppStartedAt() : await darwinAppStartedAt()
-  } catch {
-    /* no process listing — treat the app as never having restarted */
-  }
-  appStartCache = { at: started, checkedAt: now }
-  return started
-}
-
-async function darwinAppStartedAt() {
-  const { stdout } = await execFileAsync('ps', ['-axo', 'pid=,lstart=,command='], { maxBuffer: 8 * 1024 * 1024 })
-  for (const line of stdout.split('\n')) {
-    const m = line.match(/^\s*\d+\s+(\w{3} \w{3}\s+\d+ \d{2}:\d{2}:\d{2} \d{4})\s+(\/.*)$/)
-    if (!m) continue
-    const [, when, command] = m
-    // The main process only — helper processes carry a --type= flag.
-    if (!command.includes('/Claude.app/Contents/MacOS/Claude') || command.includes('--type=')) continue
-    const parsed = Date.parse(when)
-    return Number.isNaN(parsed) ? 0 : parsed
-  }
-  return 0
-}
-
-/**
- * The same answer on Windows. There is no `ps`, and `tasklist` knows neither start times nor
- * command lines, so this asks CIM, which knows both. The desktop app and the CLI are both
- * `claude.exe` here, so the main process is picked out by shape rather than by path: the one
- * with no `--type=` flag whose children (the helpers, which all carry one) point back at it.
- * A PowerShell round trip is a few hundred milliseconds, which the 15s cache above absorbs.
- */
-async function windowsAppStartedAt() {
-  const script = [
-    "Get-CimInstance Win32_Process -Filter \"Name='claude.exe'\" | ForEach-Object {",
-    "  if ($_.CreationDate) { '{0}|{1}|{2}|{3}' -f $_.ProcessId, $_.ParentProcessId,",
-    "    $_.CreationDate.ToUniversalTime().ToString('o'), $_.CommandLine } }",
-  ].join(' ')
-  const { stdout } = await execFileAsync('powershell', ['-NoProfile', '-NonInteractive', '-Command', script], {
-    maxBuffer: 8 * 1024 * 1024,
-  })
-  const rows = stdout
-    .split(/\r?\n/)
-    .map((line) => line.split('|'))
-    .filter((parts) => parts.length >= 4)
-    .map(([pid, ppid, when, ...command]) => ({
-      pid,
-      ppid,
-      when: Date.parse(when),
-      command: command.join('|'),
-    }))
-  const helperParents = new Set(rows.filter((r) => r.command.includes('--type=')).map((r) => r.ppid))
-  const main = rows.find((r) => helperParents.has(r.pid) && !r.command.includes('--type='))
-  return main && !Number.isNaN(main.when) ? main.when : 0
-}
-
 export default {
   id: 'claude-code',
   name: 'Claude Code',
@@ -501,7 +384,5 @@ export default {
   scanThreads,
   openThread,
   newSession,
-  setArchived,
-  appStartedAt,
   paths: { DESKTOP_SESSIONS, CLI_PROJECTS, CLI_LIVE },
 }

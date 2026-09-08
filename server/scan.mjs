@@ -100,19 +100,3 @@ const dispatch = (harnessId) => {
 export const openThread = (harnessId, ref) => dispatch(harnessId).openThread(ref)
 
 export const newSession = (harnessId, dir) => dispatch(harnessId).newSession(dir)
-
-export const setThreadArchived = (harnessId, ref, archived) => dispatch(harnessId).setArchived(ref, archived)
-
-/**
- * When a harness's own app last started, used to tell an archive it has already read from
- * one still waiting on disk. A harness with no long-lived app has nothing to report.
- */
-export async function harnessAppStartedAt(harnessId) {
-  const h = harnessById(harnessId)
-  if (!h?.appStartedAt) return 0
-  try {
-    return await h.appStartedAt()
-  } catch {
-    return 0
-  }
-}

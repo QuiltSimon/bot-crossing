@@ -5,12 +5,10 @@ import { spawn } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
 import {
   defaultHarness,
-  harnessAppStartedAt,
   harnessStatus,
   newSession as harnessNewSession,
   openThread as harnessOpenThread,
   scanThreads,
-  setThreadArchived,
 } from './scan.mjs'
 
 const here = path.dirname(fileURLToPath(import.meta.url))
@@ -22,7 +20,7 @@ const STATE_VERSION = 1
 /**
  * Colony state is only ever the things the *game* invents — which plot a project got,
  * what a thread's building looks like, what you archived. The threads themselves stay
- * read-only: nothing here ever writes to a harness's data except the one archive flag.
+ * read-only: this file is the only thing Bot Crossing writes, anywhere.
  */
 const emptyState = () => ({
   version: STATE_VERSION,
@@ -57,9 +55,9 @@ async function readState() {
 }
 
 /**
- * One writer: the browser owns this file and PUTs it whole. `/api/archive` deliberately
- * does not touch it — if it did, the next save from a page holding older state would
- * silently drop every archive made since that page loaded.
+ * One writer: the browser owns this file and PUTs it whole. Nothing on the server writes it —
+ * if anything did, the next save from a page holding older state would silently drop every
+ * archive made since that page loaded.
  */
 async function writeState(next) {
   const state = {
@@ -126,34 +124,25 @@ async function resolveFolder(folder) {
 }
 
 /**
- * A harness loads its session records at launch and rewrites them whenever it touches one,
- * which silently clears an archive flag set from outside. So the colony keeps its own list
- * and re-asserts the flag on every scan; an archive that gets stomped comes back within one
- * poll. `archivePending` is true while the flag is on disk but the running app has not read
- * it yet — that astronaut is walking to the ship but has not boarded.
+ * Mark the threads the colony has retired.
+ *
+ * Nothing is written anywhere. Bot Crossing used to set `isArchived` on the desktop app's own
+ * session record, and it did land on disk — but the app serves from the copy it loaded at
+ * launch, so the thread stayed put in its own list until the next restart, and the app would
+ * rewrite the record from memory whenever it touched the thread. Papering over that took a
+ * re-assert on every poll, a `ps` sweep to guess whether the app had re-read the file, and a
+ * *pending* state for the gap between the two — a lot of machinery for something that still
+ * looked broken to anyone with the app open.
+ *
+ * So the colony keeps its own list and that is all it does. Archiving in the harness's own UI
+ * still sends the astronaut home, because the scan reads that flag; archiving here is the
+ * colony's own business. Nothing outside `data/colony.json` is ever written.
  */
 async function reconcileArchived(threads) {
   const state = await readState()
   if (!state.archived.length) return threads
   const wanted = new Set(state.archived)
-
-  // One `ps` sweep per harness rather than one per thread.
-  const startedAt = new Map()
-  for (const id of new Set(threads.map((t) => t.harness))) {
-    startedAt.set(id, await harnessAppStartedAt(id))
-  }
-
-  return Promise.all(
-    threads.map(async (thread) => {
-      if (!wanted.has(thread.id)) return thread
-      if (!thread.archived && thread.canArchive) {
-        await setThreadArchived(thread.harness, thread.ref, true).catch(() => {})
-      }
-      const at = state.archivedAt[thread.id] ?? 0
-      const appStart = startedAt.get(thread.harness) || 0
-      return { ...thread, archived: true, archivePending: !(appStart && appStart > at) }
-    })
-  )
+  return threads.map((t) => (wanted.has(t.id) ? { ...t, archived: true } : t))
 }
 
 function send(res, status, body) {
@@ -284,23 +273,6 @@ export async function apiMiddleware(req, res, next) {
       const result = harnessNewSession(harness || (await defaultHarness()), dir)
       if (result.ok) launch(result.url)
       return send(res, result.ok ? 200 : 400, result)
-    }
-
-    if (url.pathname === '/api/archive' && req.method === 'POST') {
-      const { id, harness, ref, archived } = await readJsonBody(req)
-      if (!id) return send(res, 400, { ok: false, error: 'Missing thread id' })
-
-      // Only the harness's own records are touched here — the page records the intent.
-      if (!ref || !harness) {
-        return send(res, 200, {
-          ok: true,
-          archived: Boolean(archived),
-          harnessRecord: false,
-          note: 'Archived in the colony. That harness has no session record for this thread.',
-        })
-      }
-      const result = await setThreadArchived(harness, ref, archived)
-      return send(res, 200, { ...result, ok: true, archived: Boolean(archived), harnessRecord: result.ok })
     }
 
     return send(res, 404, { error: 'Unknown endpoint' })
