@@ -14,9 +14,10 @@
  *   - the CLI keeps the raw transcript, which is the only source for terminal-started work
  */
 import fsp from 'node:fs/promises'
+import { existsSync, readdirSync } from 'node:fs'
 import path from 'node:path'
 import os from 'node:os'
-import { exists, jsonLines, listDirs, listFiles, num, readHead } from '../lib/fsutil.mjs'
+import { exists, jsonLines, listDirs, listFiles, num, readHead, readTail } from '../lib/fsutil.mjs'
 
 const HOME = os.homedir()
 
@@ -27,12 +28,47 @@ const HOME = os.homedir()
 function desktopDataDir() {
   switch (process.platform) {
     case 'win32':
-      return path.join(process.env.APPDATA || path.join(HOME, 'AppData', 'Roaming'), 'Claude')
+      return windowsDataDir()
     case 'linux':
       return path.join(process.env.XDG_CONFIG_HOME || path.join(HOME, '.config'), 'Claude')
     default:
       return path.join(HOME, 'Library', 'Application Support', 'Claude')
   }
+}
+
+/**
+ * Windows has two answers, because the app ships two ways.
+ *
+ * The classic installer writes to `%APPDATA%\Claude`, which is what Electron's `userData` means
+ * everywhere else. Installed from the Microsoft Store the app is an MSIX package, and MSIX
+ * *redirects* what a packaged app believes is `%APPDATA%` into its own private
+ * `…\Packages\<family>\LocalCache\Roaming`. The app is installed, running and writing session
+ * records — and `%APPDATA%\Claude` does not exist at all.
+ *
+ * The package folder is globbed rather than named: its suffix is a hash of the publisher, and
+ * hard-coding that buys a constant which is right until it is not, and then wrong in a way that
+ * looks exactly like the app having been uninstalled.
+ *
+ * Resolved once, at import. Installing the app while the colony is running therefore wants a
+ * restart to be noticed — a knowing trade, since the alternative is globbing `Packages` on every
+ * scan to catch something that happens once.
+ */
+function windowsDataDir() {
+  const roaming = path.join(process.env.APPDATA || path.join(HOME, 'AppData', 'Roaming'), 'Claude')
+  const local = process.env.LOCALAPPDATA || path.join(HOME, 'AppData', 'Local')
+  const candidates = [roaming]
+  try {
+    for (const entry of readdirSync(path.join(local, 'Packages'), { withFileTypes: true })) {
+      if (entry.isDirectory() && entry.name.startsWith('Claude_')) {
+        candidates.push(path.join(local, 'Packages', entry.name, 'LocalCache', 'Roaming', 'Claude'))
+      }
+    }
+  } catch {
+    /* no Packages directory — this machine has no Store apps at all */
+  }
+  // Whichever actually holds the records. Falling back to the unpackaged path keeps every
+  // caller working against a real path when neither exists, which `detect()` reads as "no app".
+  return candidates.find((dir) => existsSync(path.join(dir, 'claude-code-sessions'))) || roaming
 }
 
 /** Where the Claude desktop app keeps one JSON record per thread. */
@@ -51,6 +87,13 @@ const HEAD_BYTES = 192 * 1024
  * warmed ones sat 16 hours to 3 days idle while genuinely active work was minutes old.
  */
 const ACTIVE_WINDOW_MS = 30 * 60 * 1000
+
+/**
+ * Every id this adapter hands out is prefixed. `server/harnesses/README.md` asks for ids unique
+ * across harnesses, and while two UUIDs will not collide, the colony keys its archive list and
+ * saved layout on this string — so it is worth being unambiguous rather than merely lucky.
+ */
+const ID = (raw) => `claude-code:${raw}`
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 const DESKTOP_ID = /^local_[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
@@ -141,6 +184,44 @@ async function scanTranscripts() {
     }
   }
   return byId
+}
+
+/** How much of a transcript's end it takes to see whose turn it is. One record is plenty. */
+const TAIL_BYTES = 64 * 1024
+
+/**
+ * Whether a transcript ends with the turn handed back to you.
+ *
+ * A live process is not the same thing as work in progress. The CLI holds its process open while
+ * it sits at the prompt, so "the pid exists and the file moved recently" marks a thread that
+ * finished four minutes ago and asked you a question as *working* — an astronaut hammering away
+ * at a thread whose whole point is that it is waiting.
+ *
+ * The transcript says which it is. A last assistant message that called a tool is mid-turn; one
+ * that called nothing has handed the turn back and the reply is yours. `stop_reason` alone will
+ * not do — it is `end_turn` on a main thread's last message and empty on some others — so what
+ * the message *called* is the half worth testing.
+ *
+ * Only threads that could plausibly be running pay for this, so it costs one small read each.
+ */
+async function awaitingReply(file) {
+  let records
+  try {
+    records = jsonLines(await readTail(file, TAIL_BYTES))
+  } catch {
+    return false
+  }
+  for (let i = records.length - 1; i >= 0; i--) {
+    const r = records[i]
+    // A user turn, a tool result or an attachment all mean the model speaks next — whatever the
+    // process is doing, it is not waiting on anyone.
+    if (r.type === 'user') return false
+    if (r.type !== 'assistant') continue
+    const content = r.message?.content
+    const calling = Array.isArray(content) && content.some((c) => c?.type === 'tool_use')
+    return !calling && r.message?.stop_reason !== 'tool_use'
+  }
+  return false
 }
 
 /** Transcript metadata is expensive to parse, so keep it until the file changes. */
@@ -241,7 +322,10 @@ function mergeThread(existing, next) {
  * id looks like.
  */
 function toThread(t) {
-  const { desktopSessionId, desktopSessionIds, cliSessionId, bridgeSessionId, titled, hasLiveProcess, ...rest } = t
+  const {
+    desktopSessionId, desktopSessionIds, cliSessionId, bridgeSessionId,
+    titled, hasLiveProcess, transcriptFile, recordActivityAt, ...rest
+  } = t
   return {
     ...rest,
     canOpen: Boolean((desktopSessionId && DESKTOP_ID.test(desktopSessionId)) || (cliSessionId && UUID.test(cliSessionId))),
@@ -272,7 +356,7 @@ async function scanThreads() {
     const meta = entry ? await transcriptMeta(entry) : null
 
     add({
-      id: cliSessionId || s.sessionId,
+      id: ID(cliSessionId || s.sessionId),
       cliSessionId,
       desktopSessionId: s.sessionId || '',
       desktopSessionIds: s.sessionId ? [s.sessionId] : [],
@@ -288,7 +372,17 @@ async function scanThreads() {
       model: s.model || '',
       effort: s.effort || '',
       createdAt: num(s.createdAt) || meta?.startedAt || 0,
-      lastActivityAt: num(s.lastActivityAt) || num(s.lastFocusedAt) || num(s.createdAt) || 0,
+      // The desktop record's own stamp lags: the app writes it when the thread is focused, so a
+      // session running in a terminal — or in a window you are not looking at — reads as hours
+      // old while its transcript is being written to right now. The later of the two is true.
+      lastActivityAt: Math.max(
+        num(s.lastActivityAt) || num(s.lastFocusedAt) || num(s.createdAt) || 0,
+        entry?.mtime || 0
+      ),
+      // Kept apart from the above. "Unread" compares against when you last *looked*, and both
+      // sides have to come from the app's own bookkeeping: measure a transcript mtime against
+      // `lastFocusedAt` instead and every background write puts a `?` over half the colony.
+      recordActivityAt: num(s.lastActivityAt) || num(s.lastFocusedAt) || num(s.createdAt) || 0,
       lastFocusedAt: num(s.lastFocusedAt),
       hasLiveProcess: live.has(cliSessionId),
       hasError: Boolean(s.error),
@@ -298,6 +392,7 @@ async function scanThreads() {
       archived: s.isArchived === true || s.isArchived === 'True',
       hasTranscript: Boolean(entry),
       sizeBytes: entry?.size || 0,
+      transcriptFile: entry?.file || '',
       source: 'desktop',
     })
   }
@@ -309,7 +404,7 @@ async function scanThreads() {
     const cwd = meta.cwd || decodeProjectDir(path.basename(entry.projectDir))
     const { projectPath, project, worktree } = projectOf(cwd, '')
     add({
-      id,
+      id: ID(id),
       cliSessionId: id,
       desktopSessionId: '',
       desktopSessionIds: [],
@@ -335,17 +430,46 @@ async function scanThreads() {
       archived: false,
       hasTranscript: true,
       sizeBytes: entry.size,
+      transcriptFile: entry?.file || '',
       source: 'cli',
     })
   }
 
-  const threads = [...byId.values()]
+  const now = Date.now()
+
+  /**
+   * Drop the app's empty bookkeeping records.
+   *
+   * Resuming a thread makes the desktop app write a second record for the same conversation, and
+   * one of the two carries the title and the transcript link while the other carries nothing.
+   * With no `cliSessionId` on the empty one there is no key to merge the pair on, so it survives
+   * as a thread of its own: an untitled entry with no transcript behind it, standing on the map
+   * as a nameless twin of a thread you have already dealt with.
+   *
+   * A record with no transcript, no title and no live process is not a conversation. The age
+   * check keeps a genuinely new session — opened seconds ago, nothing written yet — out of it.
+   */
+  const NEW_SESSION_MS = 10 * 60 * 1000
+  const threads = [...byId.values()].filter(
+    (t) =>
+      t.hasTranscript ||
+      t.titled ||
+      t.hasLiveProcess ||
+      now - (t.lastActivityAt || t.createdAt || 0) < NEW_SESSION_MS
+  )
+
   // Unread = the thread moved on after you last looked at it; never opened counts as unread.
   // Terminal-only threads have no focus history at all, so "unread" is unknowable — not true.
-  const now = Date.now()
   for (const thread of threads) {
-    thread.unread = thread.desktopSessionIds.length > 0 && thread.lastActivityAt > thread.lastFocusedAt
-    thread.running = thread.hasLiveProcess && now - thread.lastActivityAt < ACTIVE_WINDOW_MS
+    const seenAt = thread.recordActivityAt ?? thread.lastActivityAt
+    thread.unread = thread.desktopSessionIds.length > 0 && seenAt > thread.lastFocusedAt
+    const fresh = now - thread.lastActivityAt < ACTIVE_WINDOW_MS
+    const waiting =
+      thread.hasLiveProcess && fresh && thread.transcriptFile ? await awaitingReply(thread.transcriptFile) : false
+    thread.running = thread.hasLiveProcess && fresh && !waiting
+    // A thread that handed the turn back wants you, whether or not the desktop app has ever seen
+    // it — the only way a terminal-only thread can ask for anything at all.
+    if (waiting) thread.unread = true
   }
   return threads.map(toThread)
 }

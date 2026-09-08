@@ -15,7 +15,29 @@ const here = path.dirname(fileURLToPath(import.meta.url))
 const DATA_DIR = process.env.BOT_CROSSING_DATA || path.join(here, '..', 'data')
 const STATE_FILE = path.join(DATA_DIR, 'colony.json')
 
-const STATE_VERSION = 1
+const STATE_VERSION = 2
+
+/**
+ * v1 keyed everything on a bare session id, because Claude Code was the only harness and its
+ * ids are UUIDs. Adapters now prefix (`claude-code:…`, `codex:…`) so two harnesses can never
+ * name the same thread, which means a v1 file's archive list no longer matches anything.
+ *
+ * Only Claude Code ever wrote a bare id, so the rewrite is unambiguous. One shot, on read.
+ */
+const BARE_UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+const migrateId = (id) => (BARE_UUID.test(id) ? `claude-code:${id}` : id)
+
+function migrate(raw) {
+  if (Number(raw.version) >= 2) return raw
+  const keys = (o) => Object.fromEntries(Object.entries(asObject(o)).map(([k, v]) => [migrateId(k), v]))
+  return {
+    ...raw,
+    archived: asArray(raw.archived).map(migrateId),
+    archivedAt: keys(raw.archivedAt),
+    opened: asArray(raw.opened).map(migrateId),
+    seen: keys(raw.seen),
+  }
+}
 
 /**
  * Colony state is only ever the things the *game* invents — which plot a project got,
@@ -38,7 +60,7 @@ const asArray = (v) => (Array.isArray(v) ? v : [])
 
 async function readState() {
   try {
-    const raw = JSON.parse(await fsp.readFile(STATE_FILE, 'utf8'))
+    const raw = migrate(JSON.parse(await fsp.readFile(STATE_FILE, 'utf8')))
     return {
       version: STATE_VERSION,
       archived: asArray(raw.archived),
@@ -59,6 +81,18 @@ async function readState() {
  * if anything did, the next save from a page holding older state would silently drop every
  * archive made since that page loaded.
  */
+/**
+ * Writes are serialised through one chain, and each gets its own temp file.
+ *
+ * Both halves matter and neither is theoretical. A shared `colony.json.tmp` means two saves
+ * landing together race on the rename and one throws ENOENT — a 500 the page has no idea what
+ * to do with, so the save is simply lost. And read-then-write is not atomic across an `await`,
+ * so without the chain two callers can both pass the version check below before either writes.
+ */
+let writeQueue = Promise.resolve()
+let tmpSeq = 0
+const serialise = (fn) => (writeQueue = writeQueue.then(fn, fn))
+
 async function writeState(next) {
   const state = {
     version: STATE_VERSION,
@@ -71,9 +105,14 @@ async function writeState(next) {
     updatedAt: Date.now(),
   }
   await fsp.mkdir(DATA_DIR, { recursive: true })
-  const tmp = STATE_FILE + '.tmp'
-  await fsp.writeFile(tmp, JSON.stringify(state, null, 2))
-  await fsp.rename(tmp, STATE_FILE)
+  const tmp = `${STATE_FILE}.${process.pid}.${++tmpSeq}.tmp`
+  try {
+    await fsp.writeFile(tmp, JSON.stringify(state, null, 2))
+    await fsp.rename(tmp, STATE_FILE)
+  } catch (err) {
+    await fsp.rm(tmp, { force: true }).catch(() => {})
+    throw err
+  }
   return state
 }
 
@@ -250,8 +289,31 @@ export async function apiMiddleware(req, res, next) {
       return send(res, 200, await readState())
     }
 
+    /**
+     * Optimistic concurrency, so a second tab cannot paste over the first one's work.
+     *
+     * `baseUpdatedAt` is the version the caller last agreed with. If the file no longer carries
+     * it, the caller's whole-file body describes a colony that no longer exists — so the disk
+     * state comes back with a 409 and the page merges against it. Merging here was the other
+     * option and it is the wrong place: the server has no idea which of two `plots` layouts a
+     * person actually dragged.
+     *
+     * The test is inequality rather than "older than", because a colony file also moves
+     * *backwards* — restored from a backup, edited by hand — and a page open across that holds
+     * a base newer than disk, which sails through a greater-than check and pastes the
+     * pre-restore colony straight back.
+     *
+     * A missing or zero base is a first write and is allowed: nothing to lose on a fresh
+     * install, and it keeps the endpoint drivable from `curl`.
+     */
     if (url.pathname === '/api/state' && req.method === 'PUT') {
-      return send(res, 200, await writeState(await readJsonBody(req)))
+      const body = await readJsonBody(req)
+      const base = Number(body.baseUpdatedAt) || 0
+      return serialise(async () => {
+        const current = await readState()
+        if (base && current.updatedAt !== base) return send(res, 409, current)
+        return send(res, 200, await writeState(body))
+      })
     }
 
     if (url.pathname === '/api/open' && req.method === 'POST') {
