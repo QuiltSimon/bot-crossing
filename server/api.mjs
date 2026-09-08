@@ -238,7 +238,32 @@ async function reconcileArchived(threads) {
   const state = await readState()
   if (!state.archived.length) return threads
   const wanted = new Set(state.archived)
-  return threads.map((t) => (wanted.has(t.id) ? { ...t, archived: true } : t))
+
+  /**
+   * An archive is remembered by the thread id the page saw, but that id is only the *canonical*
+   * one. A thread the desktop app knows and the CLI has not written a transcript for is keyed on
+   * its desktop record; the moment a transcript appears it re-keys to that session's UUID, and a
+   * list keyed on the old string stops matching. The thread quietly comes back, which reads as
+   * the archive having failed.
+   *
+   * So the ids inside `ref` count too. They are opaque to everything else here — this only ever
+   * asks whether a string it already holds appears among them.
+   */
+  const archived = (thread) => {
+    if (wanted.has(thread.id)) return true
+    const ref = thread.ref
+    if (!ref || typeof ref !== 'object') return false
+    for (const value of Object.values(ref)) {
+      if (typeof value === 'string') {
+        if (value && wanted.has(value)) return true
+      } else if (Array.isArray(value)) {
+        for (const v of value) if (typeof v === 'string' && v && wanted.has(v)) return true
+      }
+    }
+    return false
+  }
+
+  return threads.map((t) => (archived(t) ? { ...t, archived: true } : t))
 }
 
 function send(res, status, body) {

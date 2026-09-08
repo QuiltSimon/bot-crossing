@@ -170,3 +170,74 @@ test('openInTerminal refuses anything not already resolved to absolute paths', a
   assert.equal((await openInTerminal([], '/tmp')).ok, false, 'empty argv')
   assert.equal((await openInTerminal(['/bin/ls', 123], '/tmp')).ok, false, 'non-string argument')
 })
+
+// ── Cursor, faked on disk ─────────────────────────────────────────────────────
+
+async function fakeCursor(dirName, records) {
+  const home = await fsp.mkdtemp(path.join(os.tmpdir(), 'cursor-fixture-'))
+  const dir = path.join(home, dirName, 'agent-transcripts', SESSION_ID)
+  await fsp.mkdir(dir, { recursive: true })
+  await fsp.writeFile(path.join(dir, `${SESSION_ID}.jsonl`), records.map((r) => JSON.stringify(r)).join('\n') + '\n')
+  return home
+}
+
+async function cursorWith(home) {
+  process.env.BOT_CROSSING_CURSOR_PROJECTS = home
+  const mod = await import(`../server/harnesses/cursor.mjs?${home}`)
+  return mod.default
+}
+
+const askedFor = (text) => ({ role: 'user', message: { content: [{ type: 'text', text }] } })
+
+test('a Cursor transcript yields a thread with the typed query as its title', async () => {
+  const home = await fakeCursor('tmp', [
+    askedFor('<timestamp>Tuesday, Sep 8, 2026, 4:08 PM (UTC-7)</timestamp>\n<user_query>\nwhat project is this?\n</user_query>'),
+    { role: 'assistant', message: { content: [{ type: 'text', text: 'It is…' }] } },
+    { type: 'turn_ended', status: 'success' },
+  ])
+  const h = await cursorWith(home)
+  assert.equal(await h.detect(), true)
+  const [t] = await h.scanThreads()
+  assert.equal(t.id, `cursor:${SESSION_ID}`)
+  // Cursor's own wrapper tags are scaffolding, not something a person typed.
+  assert.equal(t.title, 'what project is this?')
+  assert.equal(t.running, false, 'a closed turn is not running')
+  assert.equal(t.hasError, false)
+  await fsp.rm(home, { recursive: true, force: true })
+})
+
+test('a transcript from before turn_ended existed is not reported as mid-turn', async () => {
+  // The older corpus carries no markers at all. Reading "no marker" as "still working" would
+  // light up every historical thread on the map.
+  const home = await fakeCursor('tmp', [
+    askedFor('<user_query>old thread</user_query>'),
+    { role: 'assistant', message: { content: [{ type: 'text', text: 'done' }] } },
+  ])
+  const h = await cursorWith(home)
+  const [t] = await h.scanThreads()
+  assert.equal(t.running, false)
+  await fsp.rm(home, { recursive: true, force: true })
+})
+
+test('a failed turn is an error, and an open turn is running', async () => {
+  const home = await fakeCursor('tmp', [
+    askedFor('<user_query>do it</user_query>'),
+    { type: 'turn_ended', status: 'error' },
+  ])
+  const h = await cursorWith(home)
+  const [t] = await h.scanThreads()
+  assert.equal(t.hasError, true)
+  await fsp.rm(home, { recursive: true, force: true })
+})
+
+test('Cursor offers a folder link but never a per-thread one it cannot honour', async () => {
+  const home = await fakeCursor('tmp', [askedFor('<user_query>hi</user_query>')])
+  const h = await cursorWith(home)
+  assert.equal(h.openThread({ sessionId: SESSION_ID }).ok, false)
+  const opened = h.newSession('/tmp/some repo')
+  assert.equal(opened.ok, true)
+  assert.equal(schemeOf(opened.url), 'cursor')
+  assert.ok(opened.url.includes('%20'), 'a space in the path is escaped, not left raw')
+  assert.equal(h.newSession('relative/path').ok, false)
+  await fsp.rm(home, { recursive: true, force: true })
+})
