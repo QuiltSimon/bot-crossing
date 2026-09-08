@@ -17,7 +17,7 @@ import fsp from 'node:fs/promises'
 import { existsSync, readdirSync } from 'node:fs'
 import path from 'node:path'
 import os from 'node:os'
-import { exists, jsonLines, listDirs, listFiles, num, readHead, readTail } from '../lib/fsutil.mjs'
+import { exists, findExecutable, jsonLines, listDirs, listFiles, num, readHead, readTail } from '../lib/fsutil.mjs'
 
 const HOME = os.homedir()
 
@@ -97,6 +97,10 @@ const ID = (raw) => `claude-code:${raw}`
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 const DESKTOP_ID = /^local_[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+// The type check matters wherever an id came back from the page: `RegExp.test` stringifies, so a
+// one-element array holding a valid id would pass the pattern and then travel on as an array.
+const isCliId = (v) => typeof v === 'string' && UUID.test(v)
+const isDesktopId = (v) => typeof v === 'string' && DESKTOP_ID.test(v)
 
 function firstText(content) {
   if (typeof content === 'string') return content
@@ -328,8 +332,10 @@ function toThread(t) {
   } = t
   return {
     ...rest,
-    canOpen: Boolean((desktopSessionId && DESKTOP_ID.test(desktopSessionId)) || (cliSessionId && UUID.test(cliSessionId))),
-    ref: { desktopSessionId, desktopSessionIds, cliSessionId },
+    canOpen: isDesktopId(desktopSessionId) || isCliId(cliSessionId),
+    // The cwd rides along because resuming from a terminal has to happen in the folder the
+    // session ran in — the worktree, not the repo root.
+    ref: { desktopSessionId, desktopSessionIds, cliSessionId, cwd: t.cwd || '' },
   }
 }
 
@@ -475,20 +481,38 @@ async function scanThreads() {
 }
 
 /**
+ * Where the `claude` CLI is, for a machine that has it but no desktop app to answer the deep
+ * link. PATH first, then the places its installers put it — never inside an application bundle.
+ * Only Linux asks: on macOS and Windows the deep link is always answered, so the walk is wasted.
+ */
+const CLI_DIRS = [
+  path.join(HOME, '.local', 'bin'),
+  path.join(HOME, '.claude', 'local'),
+  '/usr/local/bin',
+  '/usr/bin',
+]
+const cliBinary = () => findExecutable('claude', CLI_DIRS)
+
+/**
  * Hands the thread back to Claude Code. `epitaxy/<local_…>` *navigates* the desktop app
  * to a thread it already has; `resume` *imports* the transcript, which spawns a second
  * untitled session and rewrites the .jsonl — so it is only ever the fallback for threads
  * the app has never seen. Ids are pattern-checked before they reach the opener.
  */
-function openThread(ref) {
-  const { desktopSessionId, cliSessionId } = ref || {}
-  if (desktopSessionId && DESKTOP_ID.test(desktopSessionId)) {
-    return { ok: true, url: `claude://claude.ai/epitaxy/${desktopSessionId}` }
+async function openThread(ref) {
+  const { desktopSessionId, cliSessionId, cwd } = ref || {}
+  let url = ''
+  if (isDesktopId(desktopSessionId)) url = `claude://claude.ai/epitaxy/${desktopSessionId}`
+  else if (isCliId(cliSessionId)) url = `claude://resume?session=${cliSessionId}`
+
+  let command
+  if (process.platform === 'linux' && isCliId(cliSessionId)) {
+    const bin = await cliBinary()
+    if (bin) command = { argv: [bin, '--resume', cliSessionId], cwd: typeof cwd === 'string' ? cwd : '' }
   }
-  if (cliSessionId && UUID.test(cliSessionId)) {
-    return { ok: true, url: `claude://resume?session=${cliSessionId}` }
-  }
-  return { ok: false, error: 'No openable session id on that thread' }
+
+  if (!url && !command) return { ok: false, error: 'No openable session id on that thread' }
+  return { ok: true, url, command }
 }
 
 /**
@@ -496,8 +520,14 @@ function openThread(ref) {
  * "New Claude Code Session Here" quick action uses. Nothing is resumed and nothing is
  * written: the desktop app just opens an empty session with that folder as its workspace.
  */
-function newSession(dir) {
-  return { ok: true, url: `claude://code/new?${new URLSearchParams({ folder: dir })}` }
+async function newSession(dir) {
+  const url = `claude://code/new?${new URLSearchParams({ folder: dir })}`
+  let command
+  if (process.platform === 'linux') {
+    const bin = await cliBinary()
+    if (bin) command = { argv: [bin], cwd: dir }
+  }
+  return { ok: true, url, command }
 }
 
 export default {

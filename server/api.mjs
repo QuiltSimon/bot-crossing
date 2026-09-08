@@ -3,6 +3,7 @@ import os from 'node:os'
 import path from 'node:path'
 import { spawn } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
+import { openInTerminal, schemeHasHandler, schemeOf } from './lib/xdg.mjs'
 import {
   defaultHarness,
   harnessStatus,
@@ -121,6 +122,9 @@ async function writeState(next) {
  * Hand a `harness://…` deep link, or a folder, to whatever opens things on this OS. The
  * opener gets an argument list, never a shell string.
  *
+ * Only `present()` calls this, and no harness knowledge ever reaches it: an adapter says what it
+ * wants opened and this decides how, which is the seam that keeps `server/harnesses/` swappable.
+ *
  * macOS's `open(1)` does both jobs, and `xdg-open` is the Linux equivalent. On Windows the
  * equivalent is ShellExecute, reached through `rundll32 url.dll,FileProtocolHandler`: a
  * registered protocol URL goes to its app and a folder opens in Explorer, with the argument
@@ -160,6 +164,55 @@ async function resolveFolder(folder) {
   const dir = path.resolve(folder)
   const stat = await fsp.stat(dir).catch(() => null)
   return stat && stat.isDirectory() ? dir : null
+}
+
+/**
+ * Show a harness's answer to "open this" — `{ ok, url, command }` — and say truthfully whether
+ * anything happened.
+ *
+ * macOS and Windows hand the URL to the opener exactly as before: a scheme the harness's app
+ * registers is always answered there, so nothing is probed. Linux is the platform where the URL
+ * may have nowhere to go — the desktop app is optional and often absent, and `xdg-open` on a
+ * scheme nobody claims exits quietly, which used to reach the page as "Opened". So there the
+ * scheme is checked first; failing that, the harness's own CLI runs in a terminal, from the
+ * `command` the adapter offered alongside the URL; failing that, the page is told so.
+ *
+ * `command.cwd` came from the page — inside `ref`, or as the folder itself — so it gets the same
+ * check as any other folder the page names. There is no fallback directory on purpose:
+ * `claude --resume` looks a session up under the folder it ran in, and a terminal that opens on
+ * "No conversation found" and closes is worse than an error toast.
+ */
+async function present(result) {
+  // Only the reason reaches the page: a failure may still carry the adapter's command.
+  if (!result || !result.ok) return { ok: false, error: result?.error || 'Nothing to open' }
+
+  if (process.platform !== 'linux') {
+    if (!result.url) return { ok: false, error: 'That harness has no deep link to open on this platform' }
+    launch(result.url)
+    return { ok: true, url: result.url }
+  }
+
+  if (result.url && (await schemeHasHandler(result.url))) {
+    launch(result.url)
+    return { ok: true, url: result.url }
+  }
+  if (result.command) {
+    if (!result.command.cwd) return { ok: false, error: 'That thread has no folder on record to resume in' }
+    const cwd = await resolveFolder(result.command.cwd)
+    if (!cwd) return { ok: false, error: 'The folder that thread ran in is not on this machine any more' }
+    // A folder that exists but cannot be entered fails inside every terminal alike, and the
+    // terminal gets the blame; say what is actually wrong instead.
+    const enterable = await fsp.access(cwd, fsp.constants.X_OK).then(() => true, () => false)
+    if (!enterable) return { ok: false, error: 'The folder that thread ran in cannot be entered' }
+    return openInTerminal(result.command.argv, cwd)
+  }
+  const scheme = schemeOf(result.url)
+  return {
+    ok: false,
+    error: scheme
+      ? `Nothing on this machine opens ${scheme}:// links, and there is no CLI command to run instead`
+      : 'Nothing on this machine can open that',
+  }
 }
 
 /**
@@ -278,7 +331,10 @@ export async function apiMiddleware(req, res, next) {
   try {
     if (url.pathname === '/api/threads' && req.method === 'GET') {
       const threads = await reconcileArchived(await scanThreads())
-      return send(res, 200, { threads, scannedAt: Date.now() })
+      // A harness that is present but cannot read its own store says so here, rather than
+      // appearing healthy in the list while quietly contributing nothing.
+      const warnings = (await harnessStatus()).filter((h) => h.detected && h.error).map((h) => h.error)
+      return send(res, 200, { threads, scannedAt: Date.now(), warnings })
     }
 
     if (url.pathname === '/api/harnesses' && req.method === 'GET') {
@@ -318,9 +374,8 @@ export async function apiMiddleware(req, res, next) {
 
     if (url.pathname === '/api/open' && req.method === 'POST') {
       const { harness, ref } = await readJsonBody(req)
-      const result = harnessOpenThread(harness, ref)
-      if (result.ok) launch(result.url)
-      return send(res, result.ok ? 200 : 400, result)
+      const shown = await present(await harnessOpenThread(harness, ref))
+      return send(res, shown.ok ? 200 : 400, shown)
     }
 
     if ((url.pathname === '/api/new-session' || url.pathname === '/api/reveal') && req.method === 'POST') {
@@ -332,9 +387,8 @@ export async function apiMiddleware(req, res, next) {
         launch(dir)
         return send(res, 200, { ok: true })
       }
-      const result = harnessNewSession(harness || (await defaultHarness()), dir)
-      if (result.ok) launch(result.url)
-      return send(res, result.ok ? 200 : 400, result)
+      const shown = await present(await harnessNewSession(harness || (await defaultHarness()), dir))
+      return send(res, shown.ok ? 200 : 400, shown)
     }
 
     return send(res, 404, { error: 'Unknown endpoint' })

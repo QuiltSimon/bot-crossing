@@ -90,7 +90,16 @@ export async function scanThreads() {
 /** What the HUD shows in the harness list: who is installed, and what they can do. */
 export async function harnessStatus() {
   const detected = new Set((await detectedHarnesses()).map((h) => h.id))
-  return HARNESSES.map((h) => ({ id: h.id, name: h.name, detected: detected.has(h.id) }))
+  return Promise.all(
+    HARNESSES.map(async (h) => ({
+      id: h.id,
+      name: h.name,
+      detected: detected.has(h.id),
+      // Optional. An adapter that can see its harness but cannot read it — wrong Node, a store
+      // it does not understand — says why here instead of failing silently on every poll.
+      error: h.diagnostic ? await h.diagnostic().catch(() => '') : '',
+    }))
+  )
 }
 
 /** The harness to use when a caller has not said — the first one present on this machine. */
@@ -105,6 +114,7 @@ const dispatch = (harnessId) => {
   return h
 }
 
-export const openThread = (harnessId, ref) => dispatch(harnessId).openThread(ref)
+/** Both may be async: an adapter that has to look for a CLI on disk cannot answer synchronously. */
+export const openThread = async (harnessId, ref) => dispatch(harnessId).openThread(ref)
 
-export const newSession = (harnessId, dir) => dispatch(harnessId).newSession(dir)
+export const newSession = async (harnessId, dir) => dispatch(harnessId).newSession(dir)
