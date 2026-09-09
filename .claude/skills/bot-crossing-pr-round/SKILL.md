@@ -1,9 +1,9 @@
 ---
-name: pr-round
-description: Review the open PRs on Bot Crossing and report back in plain language — what is a bug, what is a feature, what conflicts, what is unsafe. Use when Jarren says "pr round", "check the PRs", "any new PRs", "review the queue", or after contributors have been active. Reviews and reports only; it never merges, closes, comments, or pushes without being told.
+name: bot-crossing-pr-round
+description: Run a review round over the open pull requests on the Bot Crossing repo (Station-Sciences/bot-crossing) and report back in plain language — what is a bug, what is a feature, what conflicts, what is unsafe. Use when Jarren says "bot crossing pr round", "pr round", "check the bot crossing PRs", "any new PRs", or "review the queue". Reviews, runs and reports only; it never merges, closes, comments, or pushes without being told.
 ---
 
-# PR round
+# Bot Crossing: PR round
 
 Bot Crossing takes PRs as feature requests with a reference implementation attached, batches
 them, and lands the intent in one branch. This skill is the review half of that: work out what
