@@ -107,6 +107,13 @@ const actions = {
     const key = status === 'agents' ? null : status
     const pool = colony.astronauts.agents.filter((a) => (key ? a.status === key : true))
     if (!pool.length) {
+      // Counted in the chips but capped out of the crew: the zone card still lists every
+      // thread, so open the project instead of dead-ending on a hint.
+      const thread = key ? [...colony.threads.values()].find((t) => statusFor(t) === key) : null
+      if (thread && colony.plots.has(thread.project)) {
+        selectProject(thread.project, { fly: true })
+        return
+      }
       hud.hint(key ? `Nobody is ${(STATUS_LABEL[key] || key).toLowerCase()} right now` : 'No crew on the surface')
       return
     }

@@ -20,6 +20,7 @@ import { MAX_AGENT_CAP } from '../core/settings.js'
 import { Particles } from '../agents/particles.js'
 import { Navigation } from '../agents/navigation.js'
 import { liveThreadsForColony } from './hidden-projects.js'
+import { STATUS_ORDER } from './roster.js'
 
 /**
  * The colony: everything that turns a list of agent threads into a place.
@@ -48,7 +49,9 @@ const LIVE_GROWTH = 0.004
 /** How many zones' positions to remember, including repos with nothing running in them. */
 const LAYOUT_MEMORY = 80
 
-export const STATUS_ORDER = ['blocked', 'waiting', 'working', 'celebrating', 'idle', 'sleeping']
+// Lives in roster.js (with the cap that uses it as a spawn priority); re-exported so the
+// HUD and card sorting keep importing it from here.
+export { STATUS_ORDER }
 
 export const STATUS_LABEL = {
   working: 'Working',

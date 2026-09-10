@@ -2,6 +2,7 @@ import * as THREE from 'three'
 import * as BufferGeometryUtils from 'three/addons/utils/BufferGeometryUtils.js'
 import { buildFaceAtlas, FACE, FACE_LOOPS, FRAME_COLS, FRAME_ROWS } from './faces.js'
 import { attachMatrixAt, decorateSkinned, frameFor } from './crew.js'
+import { capRoster } from '../game/roster.js'
 
 /**
  * Every astronaut in the colony, drawn in seven draw calls.
@@ -471,7 +472,9 @@ export class Astronauts {
     // for them. Without this the clamp above would quietly drop whoever sorted last, which is
     // better than an empty planet but still not what the scan said.
     const leaving = this.agents.reduce((n, a) => n + (a.state === 'leaving' ? 1 : 0), 0)
-    const wanted = entries.slice(0, Math.max(1, cap - leaving))
+    // Status-aware, not positional: whatever the chips count as urgent must actually be on
+    // the surface to click. See roster.js for why a plain slice hides exactly those threads.
+    const wanted = capRoster(entries, Math.max(1, cap - leaving))
     const seen = new Set()
 
     // The ramp is one door and the ship is a solid obstacle around it, so an entrance is a
