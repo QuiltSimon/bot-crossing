@@ -3,7 +3,8 @@ import './ui/styles.css'
 import { DEFAULT_PRESET, Settings, hasStoredSettings } from './core/settings.js'
 import { Engine } from './core/engine.js'
 import { CameraRig } from './core/camera.js'
-import { Colony, STATUS_LABEL, STATUS_ORDER, statusFor, transcriptProgress } from './game/colony.js'
+import { Colony, STATUS_LABEL, statusFor, transcriptProgress } from './game/colony.js'
+import { statusRank } from './game/roster.js'
 import { Hud } from './ui/hud.js'
 import { PLANETS } from './world/planet.js'
 import { loadKit } from './world/kit.js'
@@ -105,13 +106,26 @@ const actions = {
   /** Fly to the next astronaut in a given state, cycling through them on repeat presses. */
   focusStatus: (status) => {
     const key = status === 'agents' ? null : status
-    const pool = colony.astronauts.agents.filter((a) => (key ? a.status === key : true))
+    // Leavers keep their status for the walk to the ship; flying to one parks the camera
+    // on an astronaut mid-despawn.
+    const pool = colony.astronauts.agents.filter((a) => a.state !== 'leaving' && (key ? a.status === key : true))
     if (!pool.length) {
       // Counted in the chips but capped out of the crew: the zone card still lists every
-      // thread, so open the project instead of dead-ending on a hint.
-      const thread = key ? [...colony.threads.values()].find((t) => statusFor(t) === key) : null
-      if (thread && colony.plots.has(thread.project)) {
-        selectProject(thread.project, { fly: true })
+      // thread, so open the project instead of dead-ending on a hint. Threads group under
+      // 'unknown' when they carry no project, same as the colony does. Shares the cursor
+      // with the pool path so repeat presses cycle here too.
+      const names = key
+        ? [
+            ...new Set(
+              [...colony.threads.values()]
+                .filter((t) => statusFor(t) === key)
+                .map((t) => t.project || 'unknown')
+                .filter((name) => colony.plots.has(name))
+            ),
+          ]
+        : []
+      if (names.length) {
+        selectProject(names[statusCursor++ % names.length], { fly: true })
         return
       }
       hud.hint(key ? `Nobody is ${(STATUS_LABEL[key] || key).toLowerCase()} right now` : 'No crew on the surface')
@@ -384,7 +398,8 @@ function syncProject() {
   }
   const now = Date.now()
   const list = [...colony.threads.values()]
-    .filter((thread) => thread.project === plot.name)
+    // Same grouping the colony uses, or the 'unknown' zone's card would list nothing.
+    .filter((thread) => (thread.project || 'unknown') === plot.name)
     .map((thread) => ({
       id: thread.id,
       title: thread.title,
@@ -395,7 +410,7 @@ function syncProject() {
     // Whoever wants something first, then most recently touched — the same order of
     // importance the badges use above their heads.
     .sort((a, b) => {
-      const rank = STATUS_ORDER.indexOf(a.status) - STATUS_ORDER.indexOf(b.status)
+      const rank = statusRank(a.status) - statusRank(b.status)
       return rank || (b.lastActivityAt ?? 0) - (a.lastActivityAt ?? 0)
     })
 

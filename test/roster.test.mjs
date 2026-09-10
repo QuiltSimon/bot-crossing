@@ -43,12 +43,22 @@ test('incoming order is preserved within a status', () => {
   assert.deepEqual(ids(kept), ids(idles).slice(0, kept.length))
 })
 
-test('one loud status cannot crowd every other status out entirely', () => {
+test('one loud status cannot crowd the other chips out entirely', () => {
   const entries = [...many(200, 'blocked'), entry('working'), entry('waiting'), entry('idle')]
   const crew = capRoster(entries, 90)
-  for (const status of ['blocked', 'waiting', 'working', 'idle']) {
+  for (const status of ['blocked', 'waiting', 'working']) {
     assert.ok(crew.some((e) => e.status === status), `${status} has a representative`)
   }
+  // Idle has no chip: nobody can click its representative, so no blocked body is spent on one.
+  assert.ok(!crew.some((e) => e.status === 'idle'))
+})
+
+test('a dormant thread never costs a chip status its astronaut', () => {
+  const crew = capRoster([...many(2, 'blocked'), ...many(2, 'waiting'), entry('sleeping')], 4)
+  assert.deepEqual(
+    crew.map((e) => e.status),
+    ['blocked', 'blocked', 'waiting', 'waiting']
+  )
 })
 
 test('a status’s lone representative is never evicted to seat another', () => {
@@ -63,8 +73,11 @@ test('the same scan twice yields the same crew — nobody walks home for nothing
   assert.deepEqual(ids(capRoster(entries, 30)), ids(capRoster([...entries], 30)))
 })
 
-test('statuses cover STATUS_ORDER — a new status must pick a spawn priority', () => {
-  // capRoster ranks unknown statuses last silently; this trips instead when someone adds a
-  // status to statusFor without deciding where it sits in the cut.
-  assert.deepEqual(STATUS_ORDER, ['blocked', 'waiting', 'working', 'celebrating', 'idle', 'sleeping'])
+test('every status statusFor can return has a spawn priority', () => {
+  // capRoster ranks unknown statuses last silently; this trips instead when a status is
+  // removed from STATUS_ORDER (or renamed in one place) without deciding where it sits in
+  // the cut. The list mirrors the returns of statusFor in colony.js.
+  for (const status of ['blocked', 'working', 'celebrating', 'waiting', 'sleeping', 'idle']) {
+    assert.ok(STATUS_ORDER.includes(status), `${status} is ranked`)
+  }
 })

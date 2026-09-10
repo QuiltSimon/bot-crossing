@@ -49,9 +49,6 @@ const LIVE_GROWTH = 0.004
 /** How many zones' positions to remember, including repos with nothing running in them. */
 const LAYOUT_MEMORY = 80
 
-// Lives in roster.js (with the cap that uses it as a spawn priority); re-exported so the
-// HUD and card sorting keep importing it from here.
-export { STATUS_ORDER }
 
 export const STATUS_LABEL = {
   working: 'Working',

@@ -20,7 +20,17 @@
 /** Loudest first. Doubles as the spawn priority when the cap forces a choice. */
 export const STATUS_ORDER = ['blocked', 'waiting', 'working', 'celebrating', 'idle', 'sleeping']
 
+/**
+ * The statuses the HUD turns into clickable chips. The representative guarantee below only
+ * spends bodies on these — seating an idle or dormant astronaut by evicting a blocked one
+ * would cost a click target to buy something no chip can reach.
+ */
+const CHIP_STATUSES = STATUS_ORDER.slice(0, 4)
+
 const RANK = new Map(STATUS_ORDER.map((status, i) => [status, i]))
+
+/** One rank source for every status sort — an unknown status always sorts last, everywhere. */
+export const statusRank = (status) => RANK.get(status) ?? STATUS_ORDER.length
 
 /**
  * Pick which roster entries get an astronaut. Entries must carry a `status`; the incoming
@@ -29,18 +39,18 @@ const RANK = new Map(STATUS_ORDER.map((status, i) => [status, i]))
  */
 export function capRoster(entries, cap) {
   if (entries.length <= cap) return entries
-  const rank = (entry) => RANK.get(entry.status) ?? STATUS_ORDER.length
   // Array.prototype.sort is stable, which is load-bearing here: it is what keeps a quiet
   // scan from reshuffling the crew.
-  const sorted = [...entries].sort((a, b) => rank(a) - rank(b))
+  const sorted = [...entries].sort((a, b) => statusRank(a.status) - statusRank(b.status))
   const wanted = sorted.slice(0, cap)
 
   // A tiny cap can still be exhausted by one loud status — 200 blocked threads under a cap
-  // of 90 would leave "1 building" unclickable all over again. Guarantee every status in
-  // the scan one representative by evicting from the tail, never a status's own last body.
+  // of 90 would leave "1 building" unclickable all over again. Guarantee every *chip*
+  // status in the scan one representative by evicting from the tail, never a status's own
+  // last body.
   const counts = new Map()
   for (const entry of wanted) counts.set(entry.status, (counts.get(entry.status) || 0) + 1)
-  for (const status of STATUS_ORDER) {
+  for (const status of CHIP_STATUSES) {
     if (counts.get(status)) continue
     const promote = sorted.find((entry) => entry.status === status)
     if (!promote) continue

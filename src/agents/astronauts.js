@@ -471,7 +471,11 @@ export class Astronauts {
     // Agents on their way back to the ship still hold a slot, so the roster has to leave room
     // for them. Without this the clamp above would quietly drop whoever sorted last, which is
     // better than an empty planet but still not what the scan said.
-    const leaving = this.agents.reduce((n, a) => n + (a.state === 'leaving' ? 1 : 0), 0)
+    const ids = new Set(entries.map((entry) => entry.id))
+    // Only leavers the scan no longer wants hold a slot for the walk home. One whose thread
+    // is back in the roster is about to be revived in place by _updateAgent, and counting
+    // it would cut somebody else to reserve a slot it is not going to use.
+    const leaving = this.agents.reduce((n, a) => n + (a.state === 'leaving' && !ids.has(a.id) ? 1 : 0), 0)
     // Status-aware, not positional: whatever the chips count as urgent must actually be on
     // the surface to click. See roster.js for why a plain slice hides exactly those threads.
     const wanted = capRoster(entries, Math.max(1, cap - leaving))
@@ -594,6 +598,11 @@ export class Astronauts {
     if (entry.status !== agent.status) {
       agent.status = entry.status
       this._applyStatus(agent, entry.status)
+    } else if (agent.state === 'leaving') {
+      // A leaver the scan wants back has no status edge to revive it — _sendHome pointed it
+      // at the door without touching its status. Reapply in place, or it walks into the
+      // ship and despawns while still on the roster, then respawns from scratch next poll.
+      this._applyStatus(agent, agent.status)
     }
   }
 
