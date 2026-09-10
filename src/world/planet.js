@@ -82,8 +82,9 @@ export const PLANETS = {
     // Dunes instead of hills: same field inside the colony, ridges beyond it.
     terrain: 'dunes',
     scatter: 'desert',
-    // The neutral hull swatches take on this clay, so the same kit reads as adobe here.
-    buildingTint: 0xc9a176,
+    // Karak builds in its own kit — adobe domes and clay houses — instead of tinting the
+    // base kit's hulls. Natively adobe, so no `buildingTint`: clay over clay only muddies.
+    buildingKit: 'desertbase',
     // `sunTwin` puts the companion on the sun's own arc — a second, smaller sun that
     // rises and sets with the first instead of hanging fixed in the sky.
     companion: { name: 'Twin', color: 0xffd9a0, size: 2.4, glow: 0xffbe78, sunTwin: true },
