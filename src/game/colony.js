@@ -20,7 +20,7 @@ import { MAX_AGENT_CAP } from '../core/settings.js'
 import { Particles } from '../agents/particles.js'
 import { Navigation } from '../agents/navigation.js'
 import { liveThreadsForColony } from './hidden-projects.js'
-import { STATUS_ORDER } from './roster.js'
+import { projectKey, STATUS_ORDER } from './roster.js'
 
 /**
  * The colony: everything that turns a list of agent threads into a place.
@@ -270,7 +270,7 @@ export class Colony {
     // Group by repo, biggest project first so the busiest work lands nearest the middle.
     const byProject = new Map()
     for (const thread of live) {
-      const key = thread.project || 'unknown'
+      const key = projectKey(thread)
       if (!byProject.has(key)) byProject.set(key, [])
       byProject.get(key).push(thread)
     }

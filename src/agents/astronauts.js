@@ -468,17 +468,20 @@ export class Astronauts {
     this.roster = entries
     this.world = world || this.world
     const cap = Math.min(this.capacity, this.settings.get('maxAgents'))
-    // Agents on their way back to the ship still hold a slot, so the roster has to leave room
-    // for them. Without this the clamp above would quietly drop whoever sorted last, which is
-    // better than an empty planet but still not what the scan said.
-    const ids = new Set(entries.map((entry) => entry.id))
-    // Only leavers the scan no longer wants hold a slot for the walk home. One whose thread
-    // is back in the roster is about to be revived in place by _updateAgent, and counting
-    // it would cut somebody else to reserve a slot it is not going to use.
-    const leaving = this.agents.reduce((n, a) => n + (a.state === 'leaving' && !ids.has(a.id) ? 1 : 0), 0)
     // Status-aware, not positional: whatever the chips count as urgent must actually be on
     // the surface to click. See roster.js for why a plain slice hides exactly those threads.
-    const wanted = capRoster(entries, Math.max(1, cap - leaving))
+    //
+    // Cut first, then reserve. A leaver holds a slot for its walk home only when the cut
+    // did not re-adopt it — one inside the cut is revived in place by _updateAgent below.
+    // Judging leavers against the scan instead of the cut would let a leaver that is in
+    // the scan but capped out slip both counts, and the crew would overshoot the cap.
+    let wanted = capRoster(entries, cap)
+    const wantedIds = new Set(wanted.map((entry) => entry.id))
+    const leaving = this.agents.reduce(
+      (n, a) => n + (a.state === 'leaving' && !wantedIds.has(a.id) ? 1 : 0),
+      0
+    )
+    if (leaving) wanted = capRoster(entries, Math.max(1, cap - leaving))
     const seen = new Set()
 
     // The ramp is one door and the ship is a solid obstacle around it, so an entrance is a

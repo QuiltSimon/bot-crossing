@@ -17,15 +17,24 @@
  * Pure and browser-free on purpose, like merge-state.js, so it runs under bare node.
  */
 
+/**
+ * The zone a thread belongs to. Scanners tolerate threads with no project, and the colony
+ * plots those under 'unknown' — every grouping, count and lookup has to apply the same
+ * rule, or the unknown zone drifts apart from its own card and legend.
+ */
+export const projectKey = (thread) => thread.project || 'unknown'
+
 /** Loudest first. Doubles as the spawn priority when the cap forces a choice. */
 export const STATUS_ORDER = ['blocked', 'waiting', 'working', 'celebrating', 'idle', 'sleeping']
 
 /**
- * The statuses the HUD turns into clickable chips. The representative guarantee below only
- * spends bodies on these — seating an idle or dormant astronaut by evicting a blocked one
+ * The statuses the HUD turns into clickable chips (STAT_DEFS in hud.js). Named outright
+ * rather than sliced off STATUS_ORDER, so reordering the spawn priority cannot silently
+ * change which statuses the representative guarantee below covers — it only ever spends
+ * bodies on these, because seating an idle or dormant astronaut by evicting a blocked one
  * would cost a click target to buy something no chip can reach.
  */
-const CHIP_STATUSES = STATUS_ORDER.slice(0, 4)
+export const CHIP_STATUSES = ['blocked', 'waiting', 'working', 'celebrating']
 
 const RANK = new Map(STATUS_ORDER.map((status, i) => [status, i]))
 

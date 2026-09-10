@@ -8,7 +8,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 
-import { capRoster, STATUS_ORDER } from '../src/game/roster.js'
+import { capRoster, CHIP_STATUSES, STATUS_ORDER } from '../src/game/roster.js'
 
 let n = 0
 const entry = (status) => ({ id: `t${n++}`, status })
@@ -71,6 +71,13 @@ test('a status’s lone representative is never evicted to seat another', () => 
 test('the same scan twice yields the same crew — nobody walks home for nothing', () => {
   const entries = [...many(40, 'idle'), ...many(10, 'blocked'), ...many(40, 'sleeping'), entry('working')]
   assert.deepEqual(ids(capRoster(entries, 30)), ids(capRoster([...entries], 30)))
+})
+
+test('the chip statuses mirror the chips the HUD actually draws', () => {
+  // STAT_DEFS in hud.js is the other half of this list. hud.js cannot be imported under
+  // bare node, so the correspondence is pinned here instead of read from it.
+  assert.deepEqual(CHIP_STATUSES, ['blocked', 'waiting', 'working', 'celebrating'])
+  for (const status of CHIP_STATUSES) assert.ok(STATUS_ORDER.includes(status), `${status} is ranked`)
 })
 
 test('every status statusFor can return has a spawn priority', () => {
